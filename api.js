@@ -10,6 +10,9 @@ const submitBtn = document.querySelector("#submit-btn");
 
 const MAX_TITLE = 100;
 
+// Every note in this array has a unique "key" used to find it on the page.
+// Notes loaded from the server also have local: false.
+// Notes created by POST have local: true (see deleteNote for why).
 let notes = [];
 
 // Show a message in #status. type is "success", "error" or "info"
@@ -52,7 +55,14 @@ function renderNotes() {
     const body = document.createElement("p");
     body.textContent = note.body;
 
-    li.append(title, body);
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.textContent = "Delete";
+    deleteBtn.addEventListener("click", function () {
+      deleteNote(note, deleteBtn);
+    });
+
+    li.append(title, body, deleteBtn);
     notesList.append(li);
   }
 }
@@ -64,7 +74,10 @@ async function loadNotes() {
 
   try {
     const result = await request(API_URL + "?_limit=10");
-    notes = result.data;
+
+    notes = result.data.map(function (note) {
+      return { ...note, key: "server-" + note.id, local: false };
+    });
     renderNotes();
 
     if (notes.length === 0) {
@@ -91,8 +104,16 @@ async function createNote(title, body) {
       body: JSON.stringify({ title: title, body: body, userId: 1 }),
     });
 
-    // Add the note the server returned to the top of the list
-    notes.unshift(result.data);
+    // JSONPlaceholder returns id 101 for EVERY new note, so we give each
+    // created note its own unique key to tell them apart on the page.
+    const note = {
+      ...result.data,
+      key: "local-" + Date.now(),
+      local: true,
+    };
+
+    // Add the note to the top of the list
+    notes.unshift(note);
     renderNotes();
 
     setStatus(
@@ -107,6 +128,42 @@ async function createNote(title, body) {
     setStatus("Sorry, we could not save your note. Please try again.", "error");
   } finally {
     submitBtn.disabled = false;
+  }
+}
+
+// DELETE: remove a note
+//
+// How we handle JSONPlaceholder's fake storage:
+// JSONPlaceholder does not really save notes we create, so a note made with
+// POST (id 101) does not exist on the server. Sending DELETE /posts/101 would
+// return a 404 error even though the note is on our screen. So:
+//   - notes loaded from the server (local: false) get a real DELETE request,
+//     and are removed from the list only if the request succeeds;
+//   - notes we created ourselves (local: true) are removed from the list
+//     without a server call, because there is nothing on the server to delete.
+// A real backend would delete both kinds with the same DELETE /notes/{id}.
+async function deleteNote(note, button) {
+  setStatus("Deleting note...", "info");
+  button.disabled = true;
+
+  try {
+    let message = "Note removed.";
+
+    if (!note.local) {
+      const result = await request(API_URL + "/" + note.id, {
+        method: "DELETE",
+      });
+      message = `Note deleted (status ${result.status}).`;
+    }
+
+    notes = notes.filter(function (item) {
+      return item.key !== note.key;
+    });
+    renderNotes();
+    setStatus(message, "success");
+  } catch (error) {
+    setStatus("Sorry, we could not delete that note. Please try again.", "error");
+    button.disabled = false;
   }
 }
 
